@@ -1,6 +1,7 @@
 let socket = null;
 let matchedSocketId = null;
-
+let localStream=null;
+let peerConnection=null;
 // First, ping the backend to wake it up (Render cold-start workaround)
     // Initialize socket connection after backend is ready
     socket = io("https://backend-nskg.onrender.com");
@@ -92,48 +93,33 @@ let matchedSocketId = null;
     }); 
 // --- WebRTC & Video Handling --
 
-let localStream = null;
-let peerConnection = null;
-
 const iceServers = {
   iceServers: [
-    { urls: "stun:stun.l.google.com:19302" }
+    { urls: "stun:stun.l.google.com:19302" }, // Public STUN
+    // TURN example (you can replace with your own credentials)
+    // {
+    //   urls: 'turn:your.turn.server:3478',
+    //   username: 'user',
+    //   credential: 'pass'
+    // }
   ],
 };
 
 const localVideo = document.getElementById("localVideo");
 const remoteVideo = document.getElementById("remoteVideo");
 
-const startCallButton = document.getElementById("start-call");
-const endCallButton = document.getElementById("end-call");
-
-startCallButton.addEventListener("click", async () => {
-  if (matchedSocketId) {
-    socket.emit("start-call", matchedSocketId);
-  } else {
-    alert("You must be matched before starting a call.");
-  }
-});
-
-endCallButton.addEventListener("click", () => {
-  endVideoCall();
-  socket.emit("end-call", matchedSocketId);
-});
-
-// === Handle WebRTC Signaling ===
 socket.on("start-video", async (partnerId) => {
   matchedSocketId = partnerId;
   await startLocalStream();
   createPeerConnection();
 
-  // Add tracks
-  localStream.getTracks().forEach(track => {
+  localStream.getTracks().forEach((track) => {
     peerConnection.addTrack(track, localStream);
   });
 
   const offer = await peerConnection.createOffer();
   await peerConnection.setLocalDescription(offer);
-  socket.emit("video-offer", offer, matchedSocketId);
+  socket.emit("video-offer", offer, partnerId);
 });
 
 socket.on("video-offer", async (offer, partnerId) => {
@@ -143,43 +129,32 @@ socket.on("video-offer", async (offer, partnerId) => {
 
   await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
 
-  localStream.getTracks().forEach(track => {
+  localStream.getTracks().forEach((track) => {
     peerConnection.addTrack(track, localStream);
   });
 
   const answer = await peerConnection.createAnswer();
   await peerConnection.setLocalDescription(answer);
-  socket.emit("video-answer", answer, matchedSocketId);
+  socket.emit("video-answer", answer, partnerId);
 });
 
 socket.on("video-answer", async (answer) => {
-  if (peerConnection) {
-    await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
-  }
+  await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
 });
 
 socket.on("ice-candidate", async (candidate) => {
-  if (peerConnection && candidate) {
-    try {
-      await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-    } catch (err) {
-      console.error("Error adding received ICE candidate", err);
-    }
+  if (peerConnection) {
+    await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
   }
-});
-
+}); 
 socket.on("end-video", () => {
   endVideoCall();
-  alert("The other user ended the call.");
+  alert("The other user ended the video call.");
 });
 
 async function startLocalStream() {
-  try {
-    localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-    localVideo.srcObject = localStream;
-  } catch (err) {
-    console.error("Failed to access camera:", err);
-  }
+  localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+  localVideo.srcObject = localStream;
 }
 
 function createPeerConnection() {
@@ -192,11 +167,9 @@ function createPeerConnection() {
   };
 
   peerConnection.ontrack = (event) => {
-    console.log("Received remote stream");
     remoteVideo.srcObject = event.streams[0];
   };
-}
-
+} 
 function endVideoCall() {
   if (peerConnection) {
     peerConnection.close();
@@ -211,6 +184,5 @@ function endVideoCall() {
   localVideo.srcObject = null;
   remoteVideo.srcObject = null;
 }
-
 
 
